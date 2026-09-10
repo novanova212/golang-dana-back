@@ -1,0 +1,27 @@
+# Environment variables (JANGAN pernah commit file ini)
+.env
+
+# Binary hasil build
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dana-clone
+main
+
+# Output test
+*.test
+*.out
+
+# Dependency vendor (opsional, biasanya go.sum yang dipakai buat lock version)
+vendor/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# OS specific
+.DS_Store
+Thumbs.db
