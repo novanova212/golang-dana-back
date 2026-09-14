@@ -180,7 +180,11 @@ func (s *billService) SettleParticipant(participantID uint, payingUserID uint) e
 		return errors.New("bill tidak ditemukan")
 	}
 
-	if err := s.walletService.Transfer(payingUserID, bill.CreatorID, participant.Amount); err != nil {
+	if err := s.walletService.TransferWithNote(
+		payingUserID, bill.CreatorID, participant.Amount,
+		"Bayar tagihan: "+bill.Title,
+		"Terima pembayaran: "+bill.Title,
+	); err != nil {
 		return err
 	}
 
