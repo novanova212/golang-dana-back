@@ -13,15 +13,17 @@ import (
 type WalletService interface {
 	TopUp(userID uint, amount int64) (int64, error)
 	Transfer(fromUserID, toUserID uint, amount int64) error
+	GetHistory(userID uint) ([]model.Transaction, error)
 }
 
 type walletService struct {
 	userRepo repository.UserRepository
+	txRepo   repository.TransactionRepository
 	db       *gorm.DB
 }
 
-func NewWalletService(userRepo repository.UserRepository, db *gorm.DB) WalletService {
-	return &walletService{userRepo: userRepo, db: db}
+func NewWalletService(userRepo repository.UserRepository, txRepo repository.TransactionRepository, db *gorm.DB) WalletService {
+	return &walletService{userRepo: userRepo, txRepo: txRepo, db: db}
 }
 
 func (s *walletService) TopUp(userID uint, amount int64) (int64, error) {
@@ -39,6 +41,15 @@ func (s *walletService) TopUp(userID uint, amount int64) (int64, error) {
 		return 0, err
 	}
 
+	// Catat riwayatnya. 'nil' di sini artinya "pakai koneksi db biasa"
+	// (top up bukan operasi 2 langkah, jadi tidak butuh database transaction).
+	s.txRepo.Record(nil, &model.Transaction{
+		UserID:      userID,
+		Type:        "topup",
+		Amount:      amount,
+		Description: "Top up saldo",
+	})
+
 	return newBalance, nil
 }
 
@@ -53,8 +64,6 @@ func (s *walletService) Transfer(fromUserID, toUserID uint, amount int64) error 
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var sender model.User
-		// clause.Locking{Strength: "UPDATE"} ini cara yang benar di GORM v2
-		// untuk mengunci baris (setara SELECT ... FOR UPDATE di SQL).
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sender, fromUserID).Error; err != nil {
 			return errors.New("pengirim tidak ditemukan")
 		}
@@ -76,6 +85,31 @@ func (s *walletService) Transfer(fromUserID, toUserID uint, amount int64) error 
 			return err
 		}
 
+		// Catat riwayat untuk KEDUA pihak, pakai 'tx' (bukan db biasa),
+		// supaya kalau ada error setelah baris ini, catatan riwayat ini
+		// IKUT DIBATALKAN juga (rollback total, konsisten).
+		if err := s.txRepo.Record(tx, &model.Transaction{
+			UserID:      fromUserID,
+			Type:        "transfer_out",
+			Amount:      amount,
+			Description: "Transfer keluar",
+		}); err != nil {
+			return err
+		}
+
+		if err := s.txRepo.Record(tx, &model.Transaction{
+			UserID:      toUserID,
+			Type:        "transfer_in",
+			Amount:      amount,
+			Description: "Transfer masuk",
+		}); err != nil {
+			return err
+		}
+
 		return nil
 	})
+}
+
+func (s *walletService) GetHistory(userID uint) ([]model.Transaction, error) {
+	return s.txRepo.FindByUserID(userID)
 }
