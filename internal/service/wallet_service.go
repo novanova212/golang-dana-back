@@ -13,6 +13,10 @@ import (
 type WalletService interface {
 	TopUp(userID uint, amount int64) (int64, error)
 	Transfer(fromUserID, toUserID uint, amount int64) error
+	// TransferWithNote sama seperti Transfer, tapi deskripsi riwayatnya
+	// bisa dikustomisasi. Dipakai fitur lain (misal Split Bill) supaya
+	// riwayat transaksinya jelas asal-usulnya, bukan cuma "Transfer keluar".
+	TransferWithNote(fromUserID, toUserID uint, amount int64, senderNote, receiverNote string) error
 	GetHistory(userID uint) ([]model.Transaction, error)
 }
 
@@ -54,6 +58,14 @@ func (s *walletService) TopUp(userID uint, amount int64) (int64, error) {
 }
 
 func (s *walletService) Transfer(fromUserID, toUserID uint, amount int64) error {
+	return s.TransferWithNote(fromUserID, toUserID, amount, "Transfer keluar", "Transfer masuk")
+}
+
+// TransferWithNote adalah logic INTI perpindahan saldo (sama persis seperti
+// sebelumnya: pakai database transaction + row locking supaya aman dari
+// race condition), hanya saja deskripsi riwayatnya sekarang bisa diatur
+// sesuai konteks pemanggilnya (transfer biasa, atau pelunasan split bill).
+func (s *walletService) TransferWithNote(fromUserID, toUserID uint, amount int64, senderNote, receiverNote string) error {
 	if amount <= 0 {
 		return errors.New("jumlah transfer harus lebih dari 0")
 	}
@@ -85,14 +97,11 @@ func (s *walletService) Transfer(fromUserID, toUserID uint, amount int64) error 
 			return err
 		}
 
-		// Catat riwayat untuk KEDUA pihak, pakai 'tx' (bukan db biasa),
-		// supaya kalau ada error setelah baris ini, catatan riwayat ini
-		// IKUT DIBATALKAN juga (rollback total, konsisten).
 		if err := s.txRepo.Record(tx, &model.Transaction{
 			UserID:      fromUserID,
 			Type:        "transfer_out",
 			Amount:      amount,
-			Description: "Transfer keluar",
+			Description: senderNote,
 		}); err != nil {
 			return err
 		}
@@ -101,7 +110,7 @@ func (s *walletService) Transfer(fromUserID, toUserID uint, amount int64) error 
 			UserID:      toUserID,
 			Type:        "transfer_in",
 			Amount:      amount,
-			Description: "Transfer masuk",
+			Description: receiverNote,
 		}); err != nil {
 			return err
 		}
