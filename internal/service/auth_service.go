@@ -1,12 +1,5 @@
 package service
 
-// Layer "service" ini isinya LOGIKA BISNIS.
-// Contoh: "email harus unik", "password harus di-hash sebelum disimpan",
-// "kalau login berhasil, buatkan token JWT".
-//
-// Analoginya di Laravel: ini seperti Service class kalau kamu memisahkan
-// logika dari Controller (bukan taruh semua logic langsung di Controller).
-
 import (
 	"errors"
 	"time"
@@ -18,10 +11,11 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Interface: kontrak apa saja yang bisa dilakukan AuthService.
 type AuthService interface {
 	Register(name, email, password string) (*model.User, error)
-	Login(email, password string) (string, error) // mengembalikan JWT token
+	Login(email, password string) (string, error)
+	UpdateProfile(userID uint, name string) error
+	ChangePassword(userID uint, oldPassword, newPassword string) error
 }
 
 type authService struct {
@@ -33,17 +27,12 @@ func NewAuthService(userRepo repository.UserRepository, jwtSecret string) AuthSe
 	return &authService{userRepo: userRepo, jwtSecret: jwtSecret}
 }
 
-// Register mendaftarkan user baru.
 func (s *authService) Register(name, email, password string) (*model.User, error) {
-	// Cek dulu apakah email sudah dipakai. Mirip validasi 'unique:users,email'
-	// di Laravel Form Request.
 	existing, _ := s.userRepo.FindByEmail(email)
 	if existing != nil {
 		return nil, errors.New("email sudah terdaftar")
 	}
 
-	// Hash password sebelum disimpan. JANGAN PERNAH simpan password mentah.
-	// bcrypt.GenerateFromPassword ini setara dengan Hash::make() di Laravel.
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
@@ -63,24 +52,20 @@ func (s *authService) Register(name, email, password string) (*model.User, error
 	return user, nil
 }
 
-// Login memverifikasi email+password, lalu mengembalikan JWT token kalau benar.
 func (s *authService) Login(email, password string) (string, error) {
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
 		return "", errors.New("email atau password salah")
 	}
 
-	// bcrypt.CompareHashAndPassword ini setara dengan Hash::check() di Laravel.
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		return "", errors.New("email atau password salah")
 	}
 
-	// Generate JWT token, mirip fungsi yang dilakukan Laravel Sanctum/Passport
-	// saat createToken(), cuma di sini kita tulis manual.
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": user.ID,
 		"email":   user.Email,
-		"exp":     time.Now().Add(24 * time.Hour).Unix(), // token berlaku 24 jam
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	})
 
 	signedToken, err := token.SignedString([]byte(s.jwtSecret))
@@ -89,4 +74,39 @@ func (s *authService) Login(email, password string) (string, error) {
 	}
 
 	return signedToken, nil
+}
+
+// UpdateProfile mengubah nama user. userID diambil dari token JWT
+// (lewat middleware), BUKAN dari input body - supaya orang lain tidak
+// bisa mengubah profil orang lain hanya dengan menebak user_id.
+func (s *authService) UpdateProfile(userID uint, name string) error {
+	if name == "" {
+		return errors.New("nama tidak boleh kosong")
+	}
+	return s.userRepo.UpdateName(userID, name)
+}
+
+// ChangePassword mengganti password user, mewajibkan password LAMA
+// yang benar terlebih dahulu (supaya orang yang sekadar tahu token
+// bocor tidak otomatis bisa ganti password tanpa tahu password asli).
+func (s *authService) ChangePassword(userID uint, oldPassword, newPassword string) error {
+	if len(newPassword) < 6 {
+		return errors.New("password baru minimal 6 karakter")
+	}
+
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return errors.New("user tidak ditemukan")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
+		return errors.New("password lama salah")
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	return s.userRepo.UpdatePassword(userID, string(hashedPassword))
 }
