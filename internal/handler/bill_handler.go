@@ -1,7 +1,6 @@
 package handler
 
 import (
-
 	"fmt"
 	"net/http"
 
@@ -25,7 +24,7 @@ type CreateBillInput struct {
 	ParticipantIDs []uint `json:"participant_ids" binding:"required"`
 }
 
-// CreateBill menangani POST /api/bills
+// CreateBill menangani POST /api/bills (bagi RATA, cara lama).
 func (h *BillHandler) CreateBill(c *gin.Context) {
 	var input CreateBillInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -39,16 +38,45 @@ func (h *BillHandler) CreateBill(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Bill berhasil dibuat",
-		"bill":    bill,
-	})
+	c.JSON(http.StatusCreated, gin.H{"message": "Bill berhasil dibuat", "bill": bill})
 }
 
-// GetBillDetail menangani GET /api/bills/:id
-// ":id" ini parameter dinamis di URL, mirip {id} di route Laravel.
+// ParticipantShareInput mewakili satu baris input custom split dari client.
+type ParticipantShareInput struct {
+	UserID uint  `json:"user_id" binding:"required"`
+	Amount int64 `json:"amount" binding:"required"`
+}
+
+type CreateCustomBillInput struct {
+	CreatorID    uint                    `json:"creator_id" binding:"required"`
+	Title        string                  `json:"title" binding:"required"`
+	TotalAmount  int64                   `json:"total_amount" binding:"required"`
+	Participants []ParticipantShareInput `json:"participants" binding:"required"`
+}
+
+// CreateCustomBill menangani POST /api/bills/custom (porsi BEDA-BEDA per orang).
+func (h *BillHandler) CreateCustomBill(c *gin.Context) {
+	var input CreateCustomBillInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	shares := make([]service.ParticipantShare, 0, len(input.Participants))
+	for _, p := range input.Participants {
+		shares = append(shares, service.ParticipantShare{UserID: p.UserID, Amount: p.Amount})
+	}
+
+	bill, err := h.billService.CreateCustomBill(input.CreatorID, input.Title, input.TotalAmount, shares)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "Bill custom berhasil dibuat", "bill": bill})
+}
+
 func (h *BillHandler) GetBillDetail(c *gin.Context) {
-	// c.Param("id") mengambil nilai ":id" dari URL, misal /api/bills/5 -> "5"
 	id := c.Param("id")
 
 	var billID uint
@@ -63,17 +91,13 @@ func (h *BillHandler) GetBillDetail(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"bill":         bill,
-		"participants": participants,
-	})
+	c.JSON(http.StatusOK, gin.H{"bill": bill, "participants": participants})
 }
 
 type SettleInput struct {
 	UserID uint `json:"user_id" binding:"required"`
 }
 
-// SettleParticipant menangani POST /api/bills/participants/:participant_id/settle
 func (h *BillHandler) SettleParticipant(c *gin.Context) {
 	id := c.Param("participant_id")
 
