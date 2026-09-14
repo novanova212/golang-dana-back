@@ -38,6 +38,9 @@ func (s *billService) CreateBill(creatorID uint, title string, totalAmount int64
 	if len(participantIDs) == 0 {
 		return nil, errors.New("minimal ada 1 peserta selain kamu")
 	}
+	if err := validateParticipantIDs(creatorID, participantIDs); err != nil {
+		return nil, err
+	}
 
 	numPeople := int64(len(participantIDs) + 1)
 	share := totalAmount / numPeople
@@ -61,6 +64,14 @@ func (s *billService) CreateCustomBill(creatorID uint, title string, totalAmount
 		return nil, errors.New("minimal ada 1 peserta selain kamu")
 	}
 
+	ids := make([]uint, 0, len(shares))
+	for _, sh := range shares {
+		ids = append(ids, sh.UserID)
+	}
+	if err := validateParticipantIDs(creatorID, ids); err != nil {
+		return nil, err
+	}
+
 	// Jumlahkan semua porsi peserta (TIDAK termasuk creator).
 	var totalShares int64
 	for _, s := range shares {
@@ -77,6 +88,23 @@ func (s *billService) CreateCustomBill(creatorID uint, title string, totalAmount
 	}
 
 	return s.createBillInternal(creatorID, title, totalAmount, shares)
+}
+
+// validateParticipantIDs memastikan: (1) tidak ada peserta yang ID-nya
+// sama dengan creator sendiri (creator tidak "berutang" ke dirinya sendiri),
+// dan (2) tidak ada ID yang muncul dua kali (biar tidak dobel dicatat).
+func validateParticipantIDs(creatorID uint, ids []uint) error {
+	seen := make(map[uint]bool)
+	for _, id := range ids {
+		if id == creatorID {
+			return errors.New("creator tidak boleh menjadi peserta juga")
+		}
+		if seen[id] {
+			return errors.New("ada user ID yang duplikat di daftar peserta")
+		}
+		seen[id] = true
+	}
+	return nil
 }
 
 // createBillInternal adalah logic bersama yang dipakai baik oleh
@@ -121,6 +149,16 @@ func (s *billService) GetBillDetail(billID uint) (*model.Bill, []model.BillParti
 	}
 
 	return bill, participants, nil
+}
+
+// CalculateCreatorShare menghitung porsi yang ditanggung creator sendiri:
+// total tagihan dikurangi jumlah semua porsi peserta lain.
+func CalculateCreatorShare(bill *model.Bill, participants []model.BillParticipant) int64 {
+	var totalParticipantShares int64
+	for _, p := range participants {
+		totalParticipantShares += p.Amount
+	}
+	return bill.TotalAmount - totalParticipantShares
 }
 
 func (s *billService) SettleParticipant(participantID uint, payingUserID uint) error {
