@@ -17,7 +17,7 @@ type WalletService interface {
 	// bisa dikustomisasi. Dipakai fitur lain (misal Split Bill) supaya
 	// riwayat transaksinya jelas asal-usulnya, bukan cuma "Transfer keluar".
 	TransferWithNote(fromUserID, toUserID uint, amount int64, senderNote, receiverNote string) error
-	GetHistory(userID uint) ([]model.Transaction, error)
+	GetHistory(userID uint, txType string, search string) ([]model.Transaction, error)
 }
 
 type walletService struct {
@@ -119,6 +119,6 @@ func (s *walletService) TransferWithNote(fromUserID, toUserID uint, amount int64
 	})
 }
 
-func (s *walletService) GetHistory(userID uint) ([]model.Transaction, error) {
-	return s.txRepo.FindByUserID(userID)
+func (s *walletService) GetHistory(userID uint, txType string, search string) ([]model.Transaction, error) {
+	return s.txRepo.FindByUserID(userID, txType, search)
 }
