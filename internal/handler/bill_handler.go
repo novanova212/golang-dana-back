@@ -91,7 +91,22 @@ func (h *BillHandler) GetBillDetail(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"bill": bill, "participants": participants})
+	creatorShare := service.CalculateCreatorShare(bill, participants)
+
+	// Hitung juga progres pelunasan: berapa dari total yang sudah masuk.
+	var totalPaid int64 = creatorShare // porsi creator dianggap "sudah dibayar" karena dia yang bayar duluan
+	for _, p := range participants {
+		if p.Paid {
+			totalPaid += p.Amount
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"bill":          bill,
+		"participants":  participants,
+		"creator_share": creatorShare,
+		"total_paid":    totalPaid,
+	})
 }
 
 type SettleInput struct {
