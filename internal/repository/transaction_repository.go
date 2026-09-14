@@ -7,11 +7,10 @@ import (
 )
 
 type TransactionRepository interface {
-	// Record menerima 'tx' (bisa db biasa, atau tx dari dalam sebuah
-	// database transaction) supaya pencatatan riwayat ini BISA ikut
-	// di-rollback juga kalau proses Transfer di tengah jalan gagal.
 	Record(tx *gorm.DB, transaction *model.Transaction) error
-	FindByUserID(userID uint) ([]model.Transaction, error)
+	// FindByUserID: txType kosong "" berarti semua tipe, search kosong ""
+	// berarti tidak filter berdasarkan kata kunci deskripsi.
+	FindByUserID(userID uint, txType string, search string) ([]model.Transaction, error)
 }
 
 type transactionRepository struct {
@@ -23,19 +22,26 @@ func NewTransactionRepository(db *gorm.DB) TransactionRepository {
 }
 
 func (r *transactionRepository) Record(tx *gorm.DB, transaction *model.Transaction) error {
-	// Kalau 'tx' tidak diberikan (nil), pakai koneksi db biasa.
-	// Ini berguna untuk kasus TopUp yang tidak butuh transaction.
 	if tx == nil {
 		tx = r.db
 	}
 	return tx.Create(transaction).Error
 }
 
-// FindByUserID mengambil semua riwayat transaksi milik satu user,
-// diurutkan dari yang PALING BARU ke paling lama.
-func (r *transactionRepository) FindByUserID(userID uint) ([]model.Transaction, error) {
+func (r *transactionRepository) FindByUserID(userID uint, txType string, search string) ([]model.Transaction, error) {
+	query := r.db.Where("user_id = ?", userID)
+
+	if txType != "" {
+		query = query.Where("type = ?", txType)
+	}
+	if search != "" {
+		// ILIKE = pencarian case-insensitive khusus PostgreSQL
+		// (mirip LIKE tapi tidak peduli huruf besar/kecil).
+		query = query.Where("description ILIKE ?", "%"+search+"%")
+	}
+
 	var transactions []model.Transaction
-	err := r.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&transactions).Error
+	err := query.Order("created_at DESC").Find(&transactions).Error
 	if err != nil {
 		return nil, err
 	}
