@@ -35,10 +35,7 @@ func (h *WalletHandler) TopUp(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message":     "Top up berhasil",
-		"new_balance": newBalance,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Top up berhasil", "new_balance": newBalance})
 }
 
 type TransferInput struct {
@@ -62,7 +59,8 @@ func (h *WalletHandler) Transfer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Transfer berhasil"})
 }
 
-// GetHistory menangani GET /api/wallet/history/:user_id
+// GetHistory menangani GET /api/wallet/history/:user_id?type=topup&search=kata
+// Query params 'type' dan 'search' opsional - kalau tidak diisi, tampilkan semua.
 func (h *WalletHandler) GetHistory(c *gin.Context) {
 	idParam := c.Param("user_id")
 
@@ -72,7 +70,10 @@ func (h *WalletHandler) GetHistory(c *gin.Context) {
 		return
 	}
 
-	history, err := h.walletService.GetHistory(userID)
+	txType := c.Query("type")
+	search := c.Query("search")
+
+	history, err := h.walletService.GetHistory(userID, txType, search)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
