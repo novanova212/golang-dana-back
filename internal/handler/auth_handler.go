@@ -1,89 +1,90 @@
 package handler
 
-// Layer "handler" ini tugasnya:
-// 1. Terima request dari HTTP (via Gin)
-// 2. Ambil & validasi input dasar (format JSON, dst)
-// 3. Panggil service untuk proses logika bisnis
-// 4. Kembalikan response
-//
-// Ini PERSIS peran Controller di Laravel. Bedanya, di sini kita
-// pakai *gin.Context (c) untuk baca request & kirim response,
-// mirip $request dan return response()->json() di Laravel.
-
 import (
 	"net/http"
 
+	"dana-clone/internal/repository"
 	"dana-clone/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-type AuthHandler struct {
+type UserHandler struct {
+	userRepo    repository.UserRepository
 	authService service.AuthService
 }
 
-func NewAuthHandler(authService service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewUserHandler(userRepo repository.UserRepository, authService service.AuthService) *UserHandler {
+	return &UserHandler{userRepo: userRepo, authService: authService}
 }
 
-// Struct ini mendefinisikan bentuk JSON yang diharapkan masuk saat register.
-// Mirip Form Request di Laravel (RegisterRequest dengan rules()).
-// Tag `binding:"required"` artinya Gin akan otomatis menolak request
-// kalau field ini kosong -  mirip 'required' di rules Laravel.
-type RegisterInput struct {
-	Name     string `json:"name" binding:"required"`
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
+func (h *UserHandler) GetProfile(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tidak terautentikasi"})
+		return
+	}
+
+	user, err := h.userRepo.FindByID(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User tidak ditemukan"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"user": user})
 }
 
-type LoginInput struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required"`
+type UpdateProfileInput struct {
+	Name string `json:"name" binding:"required"`
 }
 
-// Register menangani POST /api/register
-func (h *AuthHandler) Register(c *gin.Context) {
-	var input RegisterInput
+// UpdateProfile menangani PUT /api/me
+// Endpoint ini DILINDUNGI middleware, jadi user_id diambil dari token
+// (bukan dari body), supaya tidak ada yang bisa mengedit profil orang lain.
+func (h *UserHandler) UpdateProfile(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tidak terautentikasi"})
+		return
+	}
 
-	// ShouldBindJSON otomatis parse body JSON ke struct di atas,
-	// SEKALIGUS validasi berdasarkan tag `binding:"..."`.
-	// Mirip $request->validate([...]) di Laravel, tapi jadi satu baris.
+	var input UpdateProfileInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	user, err := h.authService.Register(input.Name, input.Email, input.Password)
-	if err != nil {
+	if err := h.authService.UpdateProfile(userID.(uint), input.Name); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// gin.H{...} itu shortcut untuk map[string]interface{},
-	// dipakai untuk bikin response JSON. Mirip return response()->json([...]).
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Registrasi berhasil",
-		"user":    user,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Profil berhasil diperbarui"})
 }
 
-// Login menangani POST /api/login
-func (h *AuthHandler) Login(c *gin.Context) {
-	var input LoginInput
+type ChangePasswordInput struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required"`
+}
 
+// ChangePassword menangani PUT /api/me/password
+func (h *UserHandler) ChangePassword(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Tidak terautentikasi"})
+		return
+	}
+
+	var input ChangePasswordInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	token, err := h.authService.Login(input.Email, input.Password)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+	if err := h.authService.ChangePassword(userID.(uint), input.OldPassword, input.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Login berhasil",
-		"token":   token,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Password berhasil diganti"})
 }
