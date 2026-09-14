@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"dana-clone/internal/service"
@@ -58,7 +59,24 @@ func (h *WalletHandler) Transfer(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Transfer berhasil",
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Transfer berhasil"})
+}
+
+// GetHistory menangani GET /api/wallet/history/:user_id
+func (h *WalletHandler) GetHistory(c *gin.Context) {
+	idParam := c.Param("user_id")
+
+	var userID uint
+	if _, err := fmt.Sscanf(idParam, "%d", &userID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID tidak valid"})
+		return
+	}
+
+	history, err := h.walletService.GetHistory(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"history": history})
 }
