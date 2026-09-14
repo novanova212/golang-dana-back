@@ -57,6 +57,7 @@ func main() {
 		api.POST("/wallet/transfer", walletHandler.Transfer)
 		api.GET("/wallet/history/:user_id", walletHandler.GetHistory)
 		api.POST("/bills", billHandler.CreateBill)
+		api.POST("/bills/custom", billHandler.CreateCustomBill)
 		api.GET("/bills/:id", billHandler.GetBillDetail)
 		api.POST("/bills/participants/:participant_id/settle", billHandler.SettleParticipant)
 
