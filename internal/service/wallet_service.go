@@ -13,11 +13,8 @@ import (
 type WalletService interface {
 	TopUp(userID uint, amount int64) (int64, error)
 	Transfer(fromUserID, toUserID uint, amount int64) error
-	// TransferWithNote sama seperti Transfer, tapi deskripsi riwayatnya
-	// bisa dikustomisasi. Dipakai fitur lain (misal Split Bill) supaya
-	// riwayat transaksinya jelas asal-usulnya, bukan cuma "Transfer keluar".
 	TransferWithNote(fromUserID, toUserID uint, amount int64, senderNote, receiverNote string) error
-	GetHistory(userID uint, txType string, search string) ([]model.Transaction, error)
+	GetHistory(userID uint, txType string, search string, page int, limit int) ([]model.Transaction, int64, error)
 }
 
 type walletService struct {
@@ -45,8 +42,6 @@ func (s *walletService) TopUp(userID uint, amount int64) (int64, error) {
 		return 0, err
 	}
 
-	// Catat riwayatnya. 'nil' di sini artinya "pakai koneksi db biasa"
-	// (top up bukan operasi 2 langkah, jadi tidak butuh database transaction).
 	s.txRepo.Record(nil, &model.Transaction{
 		UserID:      userID,
 		Type:        "topup",
@@ -61,10 +56,15 @@ func (s *walletService) Transfer(fromUserID, toUserID uint, amount int64) error 
 	return s.TransferWithNote(fromUserID, toUserID, amount, "Transfer keluar", "Transfer masuk")
 }
 
-// TransferWithNote adalah logic INTI perpindahan saldo (sama persis seperti
-// sebelumnya: pakai database transaction + row locking supaya aman dari
-// race condition), hanya saja deskripsi riwayatnya sekarang bisa diatur
-// sesuai konteks pemanggilnya (transfer biasa, atau pelunasan split bill).
+// TransferWithNote adalah logic INTI perpindahan saldo, aman dari race
+// condition lewat database transaction + row locking.
+//
+// Catatan soal locking: clause.Locking (SELECT ... FOR UPDATE) hanya
+// didukung oleh database seperti PostgreSQL/MySQL, TIDAK oleh SQLite.
+// Supaya kode ini tetap bisa diuji dengan SQLite in-memory (lebih cepat,
+// tanpa perlu database beneran saat unit test) TANPA mengorbankan
+// keamanan di production, locking hanya diaktifkan kalau driver-nya
+// benar-benar PostgreSQL.
 func (s *walletService) TransferWithNote(fromUserID, toUserID uint, amount int64, senderNote, receiverNote string) error {
 	if amount <= 0 {
 		return errors.New("jumlah transfer harus lebih dari 0")
@@ -75,8 +75,14 @@ func (s *walletService) TransferWithNote(fromUserID, toUserID uint, amount int64
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		usesLocking := tx.Dialector.Name() == "postgres"
+
+		senderQuery := tx
+		if usesLocking {
+			senderQuery = tx.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
 		var sender model.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&sender, fromUserID).Error; err != nil {
+		if err := senderQuery.First(&sender, fromUserID).Error; err != nil {
 			return errors.New("pengirim tidak ditemukan")
 		}
 
@@ -84,8 +90,12 @@ func (s *walletService) TransferWithNote(fromUserID, toUserID uint, amount int64
 			return errors.New("saldo tidak cukup")
 		}
 
+		receiverQuery := tx
+		if usesLocking {
+			receiverQuery = tx.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
 		var receiver model.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&receiver, toUserID).Error; err != nil {
+		if err := receiverQuery.First(&receiver, toUserID).Error; err != nil {
 			return errors.New("penerima tidak ditemukan")
 		}
 
@@ -119,6 +129,6 @@ func (s *walletService) TransferWithNote(fromUserID, toUserID uint, amount int64
 	})
 }
 
-func (s *walletService) GetHistory(userID uint, txType string, search string) ([]model.Transaction, error) {
-	return s.txRepo.FindByUserID(userID, txType, search)
+func (s *walletService) GetHistory(userID uint, txType string, search string, page int, limit int) ([]model.Transaction, int64, error) {
+	return s.txRepo.FindByUserID(userID, txType, search, page, limit)
 }
