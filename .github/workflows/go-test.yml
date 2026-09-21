@@ -1,0 +1,33 @@
+name: Go Tests
+
+# Workflow ini otomatis jalan setiap ada push atau pull request ke
+# branch main, menjalankan semua unit test secara otomatis. Kalau ada
+# test yang gagal, GitHub akan menandai commit/PR itu dengan tanda X
+# merah, jadi bug ketahuan SEBELUM sempat digabung ke branch utama.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout kode
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Download dependency
+        run: go mod download
+
+      - name: Jalankan unit test
+        run: go test ./... -v -cover
+
+      - name: Build (pastikan tidak ada error compile)
+        run: go build -v ./...
