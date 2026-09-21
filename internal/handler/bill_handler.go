@@ -18,21 +18,27 @@ func NewBillHandler(billService service.BillService) *BillHandler {
 }
 
 type CreateBillInput struct {
-	CreatorID      uint   `json:"creator_id" binding:"required"`
 	Title          string `json:"title" binding:"required"`
 	TotalAmount    int64  `json:"total_amount" binding:"required"`
 	ParticipantIDs []uint `json:"participant_ids" binding:"required"`
 }
 
-// CreateBill menangani POST /api/bills (bagi RATA, cara lama).
+// CreateBill menangani POST /api/bills (PROTECTED).
+// creator_id diambil dari token - mencegah orang membuat tagihan
+// "atas nama" orang lain.
 func (h *BillHandler) CreateBill(c *gin.Context) {
+	creatorID, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
 	var input CreateBillInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	bill, err := h.billService.CreateBill(input.CreatorID, input.Title, input.TotalAmount, input.ParticipantIDs)
+	bill, err := h.billService.CreateBill(creatorID, input.Title, input.TotalAmount, input.ParticipantIDs)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -41,21 +47,23 @@ func (h *BillHandler) CreateBill(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "Bill berhasil dibuat", "bill": bill})
 }
 
-// ParticipantShareInput mewakili satu baris input custom split dari client.
 type ParticipantShareInput struct {
 	UserID uint  `json:"user_id" binding:"required"`
 	Amount int64 `json:"amount" binding:"required"`
 }
 
 type CreateCustomBillInput struct {
-	CreatorID    uint                    `json:"creator_id" binding:"required"`
 	Title        string                  `json:"title" binding:"required"`
 	TotalAmount  int64                   `json:"total_amount" binding:"required"`
 	Participants []ParticipantShareInput `json:"participants" binding:"required"`
 }
 
-// CreateCustomBill menangani POST /api/bills/custom (porsi BEDA-BEDA per orang).
 func (h *BillHandler) CreateCustomBill(c *gin.Context) {
+	creatorID, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
 	var input CreateCustomBillInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -67,7 +75,7 @@ func (h *BillHandler) CreateCustomBill(c *gin.Context) {
 		shares = append(shares, service.ParticipantShare{UserID: p.UserID, Amount: p.Amount})
 	}
 
-	bill, err := h.billService.CreateCustomBill(input.CreatorID, input.Title, input.TotalAmount, shares)
+	bill, err := h.billService.CreateCustomBill(creatorID, input.Title, input.TotalAmount, shares)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -76,6 +84,9 @@ func (h *BillHandler) CreateCustomBill(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "Bill custom berhasil dibuat", "bill": bill})
 }
 
+// GetBillDetail tetap PUBLIK (tidak protected): melihat detail tagihan
+// bersifat seperti membuka link invoice, tidak mengubah data apa pun,
+// jadi risikonya rendah dan lebih nyaman dibagikan.
 func (h *BillHandler) GetBillDetail(c *gin.Context) {
 	id := c.Param("id")
 
@@ -91,44 +102,26 @@ func (h *BillHandler) GetBillDetail(c *gin.Context) {
 		return
 	}
 
-	creatorShare := service.CalculateCreatorShare(bill, participants)
+	c.JSON(http.StatusOK, gin.H{"bill": bill, "participants": participants})
+}
 
-	// Hitung juga progres pelunasan: berapa dari total yang sudah masuk.
-	var totalPaid int64 = creatorShare // porsi creator dianggap "sudah dibayar" karena dia yang bayar duluan
-	for _, p := range participants {
-		if p.Paid {
-			totalPaid += p.Amount
-		}
+// SettleParticipant menangani POST /api/bills/participants/:participant_id/settle (PROTECTED).
+// user_id yang membayar diambil dari token - mencegah orang melunasi
+// (atau mengklaim melunasi) tagihan orang lain.
+func (h *BillHandler) SettleParticipant(c *gin.Context) {
+	payingUserID, ok := getUserID(c)
+	if !ok {
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"bill":          bill,
-		"participants":  participants,
-		"creator_share": creatorShare,
-		"total_paid":    totalPaid,
-	})
-}
-
-type SettleInput struct {
-	UserID uint `json:"user_id" binding:"required"`
-}
-
-func (h *BillHandler) SettleParticipant(c *gin.Context) {
 	id := c.Param("participant_id")
-
 	var participantID uint
 	if _, err := fmt.Sscanf(id, "%d", &participantID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ID peserta tidak valid"})
 		return
 	}
 
-	var input SettleInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := h.billService.SettleParticipant(participantID, input.UserID); err != nil {
+	if err := h.billService.SettleParticipant(participantID, payingUserID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
