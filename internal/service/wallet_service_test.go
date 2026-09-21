@@ -18,6 +18,7 @@ package service
 // perlu install compiler C tambahan.
 
 import (
+	"fmt"
 	"testing"
 
 	"dana-clone/internal/model"
@@ -29,10 +30,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// setupTestDB membuat database SQLite in-memory yang segar untuk
-// setiap test, lengkap dengan tabel-tabel yang dibutuhkan.
+// setupTestDB membuat database SQLite in-memory yang SEGAR & TERISOLASI
+// untuk setiap test. Nama database dibuat unik berdasarkan nama test
+// (t.Name()) - ini penting! Tanpa nama unik, semua test akan berbagi
+// database in-memory yang sama (karena mode "cache=shared" mempertahankan
+// koneksi tetap hidup antar test), menyebabkan data dari 1 test "bocor"
+// ke test lain (contoh: insert user dengan email yang sama gagal karena
+// dianggap duplikat, padahal itu 2 test yang seharusnya independen).
 func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 
 	err = db.AutoMigrate(&model.User{}, &model.Transaction{})
