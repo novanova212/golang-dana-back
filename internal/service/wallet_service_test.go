@@ -9,7 +9,13 @@ package service
 // perlu instalasi PostgreSQL terpisah hanya untuk testing).
 //
 // Jalankan dengan: go test ./internal/service/... -v
-// Perlu: go get gorm.io/driver/sqlite
+// Perlu: go get github.com/glebarez/sqlite
+//
+// Catatan: kita pakai github.com/glebarez/sqlite (bukan gorm.io/driver/sqlite
+// bawaan) karena driver bawaan butuh CGO + compiler C terinstall di sistem,
+// yang seringkali TIDAK ada di Windows secara default. Driver glebarez ini
+// pure Go (tanpa CGO), jadi langsung jalan di komputer mana pun tanpa
+// perlu install compiler C tambahan.
 
 import (
 	"testing"
@@ -17,9 +23,9 @@ import (
 	"dana-clone/internal/model"
 	"dana-clone/internal/repository"
 
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
