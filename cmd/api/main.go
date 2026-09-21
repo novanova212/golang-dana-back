@@ -1,8 +1,10 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
+	"time"
 
 	"dana-clone/internal/config"
 	"dana-clone/internal/handler"
@@ -15,6 +17,12 @@ import (
 )
 
 func main() {
+	// Setup structured logger sebagai default logger aplikasi.
+	// Semua log (termasuk dari log/slog di file lain) otomatis
+	// mengikuti format JSON ini.
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
 	cfg := config.LoadConfig()
 	db := config.ConnectDB(cfg)
 
@@ -25,9 +33,10 @@ func main() {
 		&model.Transaction{},
 		&model.MoneyRequest{},
 	); err != nil {
-		log.Fatal("Gagal migrate database: ", err)
+		slog.Error("gagal migrate database", "error", err)
+		os.Exit(1)
 	}
-	log.Println("Migrasi database berhasil")
+	slog.Info("migrasi database berhasil")
 
 	userRepo := repository.NewUserRepository(db)
 	authService := service.NewAuthService(userRepo, cfg.JWTSecret)
@@ -46,7 +55,9 @@ func main() {
 	reqService := service.NewMoneyRequestService(reqRepo, walletService)
 	reqHandler := handler.NewMoneyRequestHandler(reqService)
 
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(middleware.StructuredLogger())
 
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
@@ -61,39 +72,46 @@ func main() {
 
 	api := router.Group("/api")
 	{
+		// ===== PUBLIK (tidak butuh login) =====
 		api.POST("/register", authHandler.Register)
-		api.POST("/login", authHandler.Login)
-
-		api.POST("/wallet/topup", walletHandler.TopUp)
-		api.POST("/wallet/transfer", walletHandler.Transfer)
-		api.GET("/wallet/history/:user_id", walletHandler.GetHistory)
-
-		api.POST("/bills", billHandler.CreateBill)
-		api.POST("/bills/custom", billHandler.CreateCustomBill)
+		// Login dibatasi rate limit 10x per menit per IP, mencegah
+		// brute-force menebak password secara otomatis.
+		api.POST("/login", middleware.RateLimitMiddleware(10, time.Minute), authHandler.Login)
+		// Detail bill boleh dilihat siapa saja yang punya link/ID-nya,
+		// mirip membuka invoice - tidak mengubah data apa pun.
 		api.GET("/bills/:id", billHandler.GetBillDetail)
-		api.POST("/bills/participants/:participant_id/settle", billHandler.SettleParticipant)
 
-		api.POST("/requests", reqHandler.CreateRequest)
-		api.GET("/requests/incoming/:user_id", reqHandler.GetIncoming)
-		api.GET("/requests/outgoing/:user_id", reqHandler.GetOutgoing)
-		api.POST("/requests/:id/pay", reqHandler.PayRequest)
-		api.POST("/requests/:id/decline", reqHandler.DeclineRequest)
-
-		// Route TERLINDUNGI - butuh token JWT valid. Dipakai khusus untuk
-		// operasi yang berhubungan langsung dengan akun sendiri (edit
-		// profil, ganti password), supaya user_id diambil dari token,
-		// bukan dari body yang bisa dipalsukan.
+		// ===== PROTECTED (wajib token JWT valid) =====
+		// Semua operasi yang berhubungan dengan identitas/akun sendiri
+		// (top up saldo sendiri, transfer dari saldo sendiri, dst) WAJIB
+		// lewat sini, supaya user_id diambil dari token yang terverifikasi,
+		// bukan dari body request yang bisa dipalsukan oleh siapa saja.
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(cfg.JWTSecret))
 		{
 			protected.GET("/me", userHandler.GetProfile)
 			protected.PUT("/me", userHandler.UpdateProfile)
 			protected.PUT("/me/password", userHandler.ChangePassword)
+
+			protected.POST("/wallet/topup", walletHandler.TopUp)
+			protected.POST("/wallet/transfer", walletHandler.Transfer)
+			protected.GET("/wallet/history", walletHandler.GetHistory)
+
+			protected.POST("/bills", billHandler.CreateBill)
+			protected.POST("/bills/custom", billHandler.CreateCustomBill)
+			protected.POST("/bills/participants/:participant_id/settle", billHandler.SettleParticipant)
+
+			protected.POST("/requests", reqHandler.CreateRequest)
+			protected.GET("/requests/incoming", reqHandler.GetIncoming)
+			protected.GET("/requests/outgoing", reqHandler.GetOutgoing)
+			protected.POST("/requests/:id/pay", reqHandler.PayRequest)
+			protected.POST("/requests/:id/decline", reqHandler.DeclineRequest)
 		}
 	}
 
-	log.Println("Server berjalan di port", cfg.AppPort)
+	slog.Info("server berjalan", "port", cfg.AppPort)
 	if err := router.Run(":" + cfg.AppPort); err != nil {
-		log.Fatal("Gagal menjalankan server: ", err)
+		slog.Error("gagal menjalankan server", "error", err)
+		os.Exit(1)
 	}
 }
